@@ -167,6 +167,9 @@ def parser() -> argparse.ArgumentParser:
         "--browser-binary", help="path to Chrome/Chromium, or empty for managed Chrome"
     )
     config.add_argument("--chromedriver", help="path to a matching ChromeDriver")
+    config.add_argument(
+        "--browser-remote-url", help="private Selenium Grid URL, or empty for local"
+    )
     config.add_argument("--reddit-frontend", choices=["old", "www"], help="Reddit HTML interface")
     config.add_argument(
         "--rate", help="speech rate, for example +10%% (use --rate=-10%% for negative)"
@@ -226,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
                 "verbose",
                 "browser_binary",
                 "chromedriver",
+                "browser_remote_url",
                 "reddit_frontend",
             )
             if any(getattr(args, key) is not None for key in config_keys):

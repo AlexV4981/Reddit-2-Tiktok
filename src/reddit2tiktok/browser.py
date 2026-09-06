@@ -10,6 +10,8 @@ from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.selenium_manager import SeleniumManager
+from selenium.webdriver.remote.client_config import ClientConfig
+from urllib3.exceptions import HTTPError
 
 from .config import Config, resolve_path
 from .errors import AppError
@@ -56,6 +58,10 @@ def browser_paths(config: Config, config_file: Path) -> tuple[str, str]:
 
 @contextmanager
 def open_browser(config: Config, config_file: Path):
+    if config.browser_remote_url:
+        with remote_browser(config) as driver:
+            yield driver
+        return
     binary, executable = browser_paths(config, config_file)
     profiles = resolve_path(config.data_dir, config_file) / "browser-profiles"
     profiles.mkdir(parents=True, exist_ok=True)
@@ -95,3 +101,36 @@ def open_browser(config: Config, config_file: Path):
             with suppress(WebDriverException):
                 driver.quit()
             service.stop()
+
+
+@contextmanager
+def remote_browser(config: Config):
+    """One fresh anonymous Grid session; no host profile, cookies or files are uploaded."""
+    config.validate()
+    options = webdriver.ChromeOptions()
+    if config.browser_headless:
+        options.add_argument("--headless=new")
+    options.add_argument("--window-size=1280,1000")
+    driver = None
+    try:
+        driver = webdriver.Remote(
+            command_executor=config.browser_remote_url,
+            options=options,
+            client_config=ClientConfig(
+                remote_server_addr=config.browser_remote_url,
+                timeout=max(60, config.browser_timeout + 10),
+            ),
+        )
+        driver.set_page_load_timeout(config.browser_timeout)
+        driver.set_script_timeout(config.browser_timeout)
+        driver.implicitly_wait(0)
+        yield driver
+    except (WebDriverException, HTTPError, OSError) as exc:
+        raise AppError(
+            "Remote Selenium failed. Check the browser container with 'docker compose ps' "
+            "and retry 'doctor --browser'. No personal browser session is reused."
+        ) from exc
+    finally:
+        if driver is not None:
+            with suppress(WebDriverException, HTTPError, OSError):
+                driver.quit()

@@ -6,6 +6,7 @@ import re
 import tempfile
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .errors import AppError
 from .voices import KOKORO_VOICES
@@ -23,6 +24,7 @@ class Config:
     reddit_frontend: str = "old"
     browser_binary: str = ""
     chromedriver: str = ""
+    browser_remote_url: str = ""
     browser_headless: bool = True
     browser_timeout: int = 30
     scrape_delay: float = 1.0
@@ -69,6 +71,26 @@ class Config:
             value = getattr(self, key)
             if not isinstance(value, str) or any(ord(c) < 32 for c in value):
                 raise AppError(f"Config '{key}' must be an executable path or an empty string.")
+        if not isinstance(self.browser_remote_url, str):
+            raise AppError("Config 'browser_remote_url' must be a URL or an empty string.")
+        if self.browser_remote_url:
+            try:
+                remote = urlsplit(self.browser_remote_url)
+                valid = (
+                    remote.scheme in {"http", "https"}
+                    and remote.hostname
+                    and (remote.port is None or remote.port > 0)
+                    and not (remote.username or remote.password or remote.query or remote.fragment)
+                    and not any(c.isspace() or ord(c) < 32 for c in self.browser_remote_url)
+                )
+            except ValueError:
+                valid = False
+            if not valid:
+                raise AppError("Remote Selenium needs an HTTP(S) URL without credentials or query.")
+            if self.browser_binary or self.chromedriver:
+                raise AppError(
+                    "Remote Selenium cannot be combined with local browser/driver paths."
+                )
         if type(self.scrape_delay) not in (int, float) or not 0 <= self.scrape_delay <= 60:
             raise AppError("Config 'scrape_delay' must be between 0 and 60 seconds.")
         for key, low, high in (
