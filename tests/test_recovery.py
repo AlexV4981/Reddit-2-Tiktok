@@ -2,13 +2,13 @@ from dataclasses import replace
 
 import aiohttp
 import pytest
-from test_pipeline_cli import FakeMedia, FakeNarrator
 
 from reddit2tiktok.errors import AppError
 from reddit2tiktok.media import Media
 from reddit2tiktok.pipeline import Pipeline
 from reddit2tiktok.store import Store
 from reddit2tiktok.tts import EdgeNarrator
+from tests.test_pipeline_cli import FakeMedia, FakeNarrator
 
 
 def test_tts_retry_starts_fresh_audio_and_timing(monkeypatch, tmp_path):

@@ -4,16 +4,14 @@ import os
 import random
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
-import requests
 
 from reddit2tiktok.captions import caption_text, write_ass
 from reddit2tiktok.config import Config, load_config, resolve_path, save_config
 from reddit2tiktok.errors import AppError
 from reddit2tiktok.media import Background, Media
-from reddit2tiktok.reddit import RedditClient, subreddit_name
+from reddit2tiktok.reddit import subreddit_name
 from reddit2tiktok.store import Store
 from reddit2tiktok.text import narration_text, plain_text, terminal_text
 from reddit2tiktok.tts import EdgeNarrator, Word, validate_words
@@ -42,6 +40,14 @@ def test_config_roundtrip_is_relative_to_config_not_cwd(config, tmp_path, monkey
         {"data_dir": ""},
         {"fps": True},
         {"preset": "unknown"},
+        {"browser_headless": "false"},
+        {"reddit_frontend": []},
+        {"reddit_frontend": "elsewhere"},
+        {"browser_timeout": 0},
+        {"browser_binary": None},
+        {"chromedriver": "unsafe\npath"},
+        {"scrape_delay": -1},
+        {"scrape_delay": float("nan")},
     ],
 )
 def test_config_rejects_invalid_values(config, changes):
@@ -83,75 +89,25 @@ def test_subreddit_validation(value):
         subreddit_name(value)
 
 
-def listing(count=1):
-    return {
-        "data": {
-            "children": [
-                {
-                    "kind": "t3",
-                    "data": {
-                        "id": f"abc{index}",
-                        "title": f"Title {index}",
-                        "selftext": "Body",
-                        "permalink": f"/r/stories/comments/abc{index}/title/",
-                        "score": 5,
-                        "created_utc": 100,
-                    },
-                }
-                for index in range(count)
-            ]
-        }
-    }
-
-
-def test_reddit_requests_top_ten_week_and_keeps_body():
-    session = MagicMock()
-    session.headers = {}
-    session.get.return_value.json.return_value = listing(12)
-    posts = RedditClient("test-agent", session=session).top_week("r/stories")
-    assert len(posts) == 10
-    assert posts[0].body == "Body"
-    assert posts[0].url == "https://www.reddit.com/r/stories/comments/abc0/title/"
-    call = session.get.call_args
-    assert call.args[0] == "https://www.reddit.com/r/stories/top.json"
-    assert call.kwargs["params"] == {"t": "week", "limit": 10, "raw_json": 1}
-    assert call.kwargs["timeout"] == (10, 30)
-    session.close.assert_called_once()
-
-
-def test_reddit_oauth_uses_application_credentials(monkeypatch):
-    monkeypatch.setenv("REDDIT_CLIENT_ID", "example-id")
-    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "example-secret")
-    session = MagicMock()
-    session.headers = {}
-    session.post.return_value.json.return_value = {"access_token": "example-token"}
-    session.get.return_value.json.return_value = listing()
-    RedditClient("test-agent", session=session).top_week("stories")
-    assert session.post.call_args.kwargs["data"] == {"grant_type": "client_credentials"}
-    assert session.get.call_args.args[0].startswith("https://oauth.reddit.com/")
-    assert session.get.call_args.kwargs["headers"] == {"Authorization": "bearer example-token"}
-
-
-def test_reddit_block_returns_actionable_error():
-    session = MagicMock()
-    session.headers = {}
-    response = requests.Response()
-    response.status_code = 403
-    session.get.return_value.raise_for_status.side_effect = requests.HTTPError(response=response)
-    with pytest.raises(AppError, match="HTTP 403"):
-        RedditClient("test-agent", session=session).top_week("stories")
-
-
-def test_reddit_malformed_listing_and_unsafe_ids():
-    session = MagicMock()
-    session.headers = {}
-    data = listing()
-    data["data"]["children"][0]["data"]["id"] = "../../bad"
-    session.get.return_value.json.return_value = data
-    assert RedditClient("test-agent", session=session).top_week("stories") == []
-    session.get.return_value.json.return_value = {"error": "blocked"}
-    with pytest.raises(AppError, match="unexpected response"):
-        RedditClient("test-agent", session=session).top_week("stories")
+def test_old_config_migrates_without_losing_preferences(config, tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "video_dir": config.video_dir,
+                "verbose": True,
+                "voice": "en-GB-RyanNeural",
+                "reddit_user_agent": "old-client",
+            }
+        )
+    )
+    migrated = load_config(path)
+    assert migrated.verbose is True
+    assert migrated.voice == "en-GB-RyanNeural"
+    assert migrated.reddit_frontend == "old"
+    assert migrated.browser_headless is True
+    save_config(path, migrated)
+    assert "reddit_user_agent" not in json.loads(path.read_text())
 
 
 def test_store_deduplicates_and_preserves_history(tmp_path, post):

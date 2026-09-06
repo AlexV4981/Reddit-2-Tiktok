@@ -11,11 +11,14 @@ import pytest
 from reddit2tiktok.cli import main
 from reddit2tiktok.config import save_config
 from reddit2tiktok.media import Media, run
+from reddit2tiktok.reddit import RedditClient
 from reddit2tiktok.store import Store
 from reddit2tiktok.tts import Word
+from tests.html_pages import delayed, legacy_card
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("source", ["mock", pytest.param("selenium", marks=pytest.mark.browser)])
 def test_real_scrape_render_captions_audio_and_dedup(
     config,
     tmp_path,
@@ -23,8 +26,13 @@ def test_real_scrape_render_captions_audio_and_dedup(
     media_tools,
     monkeypatch,
     capsys,
+    source,
+    request,
+    html_server,
 ):
     ffmpeg, ffprobe = media_tools
+    if source == "selenium":
+        config = request.getfixturevalue("browser_config")
     config = replace(config, ffmpeg=ffmpeg, ffprobe=ffprobe)
     config_file = tmp_path / "config.json"
     save_config(config_file, config)
@@ -82,12 +90,25 @@ def test_real_scrape_render_captions_audio_and_dedup(
         return [Word("Hello", 0.1, 0.5), Word("again", 0.9, 1.3)]
 
     monkeypatch.setattr("reddit2tiktok.tts.EdgeNarrator.synthesize", synthesize)
-    monkeypatch.setattr("reddit2tiktok.cli.RedditClient.top_week", lambda self, name: [post])
+    if source == "selenium":
+        base, routes, _ = html_server
+        routes["/r/stories/top/?t=week&limit=10"] = delayed(legacy_card(post.id, title=post.title))
+        routes[f"/r/stories/comments/{post.id}/story/"] = delayed(
+            legacy_card(post.id, post.body, title=post.title)
+        )
+        monkeypatch.setattr(
+            "reddit2tiktok.cli.RedditClient",
+            lambda config, file: RedditClient(config, file, base_url=base),
+        )
+    else:
+        monkeypatch.setattr("reddit2tiktok.cli.RedditClient.top_week", lambda self, name: [post])
     args = ["--config", str(config_file), "scrape", "stories"]
     assert main(args) == 0
     store = Store(tmp_path / "data" / "posts.sqlite3")
     row = store.get(post.id)
     assert row["status"] == "ready"
+    assert row["body"] == post.body
+    assert post.title in calls[0] and post.body in calls[0]
     final = Path(row["output_path"])
     media = Media(config)
     info = media.probe(final)
