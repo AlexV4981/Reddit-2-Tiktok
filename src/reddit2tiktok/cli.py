@@ -17,9 +17,10 @@ from .errors import AppError
 from .media import Media
 from .pipeline import Pipeline
 from .reddit import RedditClient, subreddit_name
-from .store import Store
+from .store import Store, outputs_exist
 from .text import terminal_text
-from .tts import available_voices
+from .tts import available_voices, create_narrator, validate_words
+from .voices import KOKORO_VOICES, default_voice
 
 
 def wizard(path: Path, existing: Config | None = None) -> Config:
@@ -40,13 +41,15 @@ def wizard(path: Path, existing: Config | None = None) -> Config:
             video_dir = str(resolve_path(value, path))
             break
         print("Enter an existing folder containing your background videos.")
-    voice = existing.voice if existing else "en-GB-RyanNeural"
-    print("Ryan is the selected UK male voice. Speech generation requires internet access.")
-    voice = input(f"Microsoft voice ID [{voice}]: ").strip() or voice
+    voice = existing.voice if existing else "bm_daniel"
+    print("Local Kokoro British Daniel is the default; its first use downloads model files.")
+    print("An Edge voice ID, such as en-GB-RyanNeural, selects the optional online engine.")
+    voice = input(f"Voice ID [{voice}]: ").strip() or voice
+    engine = "kokoro" if voice.startswith(("bm_", "bf_")) else "edge"
     config = (
-        replace(existing, verbose=verbose, video_dir=video_dir, voice=voice)
+        replace(existing, verbose=verbose, video_dir=video_dir, voice=voice, tts_engine=engine)
         if existing
-        else (Config(video_dir=video_dir, verbose=verbose, voice=voice))
+        else (Config(video_dir=video_dir, verbose=verbose, voice=voice, tts_engine=engine))
     )
     save_config(path, config)
     print(f"Saved configuration: {path}")
@@ -65,6 +68,8 @@ def print_posts(rows: list[dict], verbose: bool, *, details: bool = False) -> No
             print(f"  {row['id']} | {row['status']}")
             if row["output_path"]:
                 print(f"  {row['output_path']}")
+            if row.get("silent_output_path"):
+                print(f"  {row['silent_output_path']}")
             if row["error"]:
                 print(f"  {terminal_text(row['error'])}")
 
@@ -97,10 +102,7 @@ def pending_ids(store: Store, force: bool = False) -> list[str]:
             "failed",
             "rendering",
         }
-        or (
-            row["status"] == "ready"
-            and (not row["output_path"] or not Path(row["output_path"]).is_file())
-        )
+        or (row["status"] == "ready" and not outputs_exist(row))
     ]
 
 
@@ -157,7 +159,10 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="command")
     config = commands.add_parser("config", help="first-run setup or edit configuration")
     config.add_argument("--video-dir", help="set the explicit input folder without prompts")
-    config.add_argument("--voice", help="Microsoft voice ID, default en-GB-RyanNeural")
+    config.add_argument("--voice", help="voice ID, default local bm_daniel")
+    config.add_argument(
+        "--tts-engine", choices=["kokoro", "edge"], help="local or online speech engine"
+    )
     config.add_argument(
         "--browser-binary", help="path to Chrome/Chromium, or empty for managed Chrome"
     )
@@ -184,8 +189,10 @@ def parser() -> argparse.ArgumentParser:
     doctor.add_argument(
         "--browser", action="store_true", help="also launch and verify Selenium Chrome"
     )
-    voices = commands.add_parser("voices", help="list voices from the online speech service")
+    voices = commands.add_parser("voices", help="list local Kokoro or online Edge voices")
+    voices.add_argument("--engine", choices=["kokoro", "edge"], default="kokoro")
     voices.add_argument("--locale", default="en-GB")
+    commands.add_parser("voice-test", help="generate a short narration and check its word timings")
     return root
 
 
@@ -194,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     path = args.config.expanduser().resolve()
     try:
         if args.command == "voices":
+            if args.engine == "kokoro":
+                if args.locale.lower() == "en-gb":
+                    for identity, description in KOKORO_VOICES.items():
+                        print(f"{identity} ({description})")
+                return 0
             voices = asyncio.run(available_voices())
             for voice in voices:
                 if voice["Locale"].lower() == args.locale.lower():
@@ -209,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
             config_keys = (
                 "video_dir",
                 "voice",
+                "tts_engine",
                 "rate",
                 "verbose",
                 "browser_binary",
@@ -222,6 +235,12 @@ def main(argv: list[str] | None = None) -> int:
                 changes = {
                     key: getattr(args, key) for key in config_keys if getattr(args, key) is not None
                 }
+                if "tts_engine" in changes and "voice" not in changes:
+                    changes["voice"] = default_voice(changes["tts_engine"])
+                elif "voice" in changes and "tts_engine" not in changes:
+                    changes["tts_engine"] = (
+                        "kokoro" if changes["voice"].startswith(("bm_", "bf_")) else "edge"
+                    )
                 if "video_dir" in changes:
                     changes["video_dir"] = str(resolve_path(changes["video_dir"], path))
                 config = replace(config, **changes)
@@ -244,6 +263,25 @@ def main(argv: list[str] | None = None) -> int:
             config = wizard(path)
         if args.verbose is not None:
             config = replace(config, verbose=args.verbose)
+        if args.command == "voice-test":
+            narrator = create_narrator(config, path)
+            folder = resolve_path(config.data_dir, path) / "voice-test"
+            folder.mkdir(parents=True, exist_ok=True)
+            audio = folder / f"narration{narrator.audio_suffix}"
+            print(
+                f"Testing {config.tts_engine}/{config.voice}; the first local run downloads model files..."
+            )
+            words = narrator.synthesize(
+                "Hello there. This is a story voice test. The captions follow each word.",
+                audio,
+            )
+            duration = Media(config, path).duration(Media(config, path).probe(audio), "audio")
+            validate_words(words, duration)
+            (folder / "words.json").write_text(
+                json.dumps([asdict(w) for w in words], indent=2), encoding="utf-8"
+            )
+            print(f"Voice OK: {len(words)} timed words, {duration:.2f}s. Audio: {audio}")
+            return 0
         if args.command is None:
             if not sys.stdin.isatty():
                 raise AppError("The menu needs a terminal. Use scrape, posts, render, or doctor.")
@@ -262,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
                     if driver.title != "Browser check":
                         raise AppError("Selenium Chrome did not load the browser check page.")
                     print(f"Selenium Chrome {driver.capabilities.get('browserVersion', '')} OK.")
-            print(f"Voice: {config.voice}. Network services are checked when used.")
+            print(f"Voice: {config.tts_engine}/{config.voice}. Run voice-test to verify speech.")
             return 0
         store = Store(resolve_path(config.data_dir, path) / "posts.sqlite3")
         if args.command == "posts":

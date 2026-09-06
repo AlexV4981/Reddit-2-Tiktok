@@ -13,16 +13,21 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS posts (
                     id TEXT PRIMARY KEY, subreddit TEXT NOT NULL, title TEXT NOT NULL,
                     body TEXT NOT NULL, url TEXT NOT NULL, score INTEGER NOT NULL,
                     created_utc REAL NOT NULL,
                     scraped_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-                    status TEXT NOT NULL DEFAULT 'scraped', output_path TEXT, error TEXT,
+                    status TEXT NOT NULL DEFAULT 'scraped', output_path TEXT,
+                    silent_output_path TEXT, error TEXT,
                     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(posts)")}
+            if "silent_output_path" not in columns:
+                db.execute("ALTER TABLE posts ADD COLUMN silent_output_path TEXT")
 
     @contextmanager
     def connect(self):
@@ -57,11 +62,24 @@ class Store:
             return dict(row) if row else None
 
     def mark(
-        self, post_id: str, status: str, output: str | None = None, error: str | None = None
+        self,
+        post_id: str,
+        status: str,
+        output: str | None = None,
+        error: str | None = None,
+        *,
+        silent_output: str | None = None,
     ) -> None:
         with self.connect() as db:
             db.execute(
-                """UPDATE posts SET status=?,output_path=?,error=?,
+                """UPDATE posts SET status=?,output_path=COALESCE(?,output_path),
+                       silent_output_path=COALESCE(?,silent_output_path),error=?,
                        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",
-                (status, output, error, post_id),
+                (status, output, silent_output, error, post_id),
             )
+
+
+def outputs_exist(row: dict) -> bool:
+    return all(
+        row.get(key) and Path(row[key]).is_file() for key in ("output_path", "silent_output_path")
+    )

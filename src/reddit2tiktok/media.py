@@ -200,6 +200,37 @@ class Media:
             cwd=subtitles.parent,
             timeout=max(600, duration * 30),
         )
+        self.verify_export(output, duration, with_audio=True)
+
+    def silent_copy(self, narrated: Path, output: Path, duration: float) -> None:
+        # Stream-copy the already captioned video so frames, clip offset and timing are identical.
+        run(
+            [
+                self.ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(narrated.resolve()),
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "copy",
+                "-an",
+                "-map_metadata",
+                "-1",
+                "-movflags",
+                "+faststart",
+                str(output.resolve()),
+            ],
+            timeout=max(60, duration * 2),
+        )
+        self.verify_export(output, duration, with_audio=False)
+
+    def verify_export(self, output: Path, duration: float, *, with_audio: bool) -> None:
+        cfg = self.config
         info = self.probe(output)
         video = next((s for s in info["streams"] if s.get("codec_type") == "video"), {})
         if (video.get("width"), video.get("height"), video.get("codec_name")) != (
@@ -208,7 +239,9 @@ class Media:
             "h264",
         ):
             raise AppError("Rendered video failed the resolution/codec check.")
-        for stream in ("video", "audio"):
+        if not with_audio and any(s.get("codec_type") == "audio" for s in info["streams"]):
+            raise AppError("Silent export unexpectedly contains audio; export rejected.")
+        for stream in ("video", "audio") if with_audio else ("video",):
             if abs(self.duration(info, stream) - duration) > max(0.15, 2 / cfg.fps):
                 raise AppError(
                     f"Rendered {stream} duration does not match narration; export rejected."

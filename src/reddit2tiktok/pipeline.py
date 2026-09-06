@@ -12,9 +12,9 @@ from .captions import write_ass
 from .config import Config, resolve_path
 from .errors import AppError
 from .media import Media
-from .store import Store
+from .store import Store, outputs_exist
 from .text import narration_text, plain_text, terminal_text
-from .tts import EdgeNarrator, validate_words
+from .tts import create_narrator, validate_words
 
 
 @contextmanager
@@ -71,7 +71,7 @@ class Pipeline:
         self.video_dir = resolve_path(config.video_dir, config_file)
         self.data_dir = resolve_path(config.data_dir, config_file)
         self.output_dir = resolve_path(config.output_dir, config_file)
-        self.narrator = narrator or EdgeNarrator(config.voice, config.rate)
+        self.narrator = narrator or create_narrator(config, config_file)
         self.media = media or Media(config, config_file)
 
     def prepare(self):
@@ -101,12 +101,7 @@ class Pipeline:
                 self.report(title)
                 if self.config.verbose:
                     self.report(row["url"])
-                if (
-                    row["status"] == "ready"
-                    and row["output_path"]
-                    and Path(row["output_path"]).is_file()
-                    and not force
-                ):
+                if row["status"] == "ready" and outputs_exist(row) and not force:
                     self.report("  Already ready; skipped.")
                     result.skipped += 1
                     continue
@@ -123,7 +118,9 @@ class Pipeline:
                     artifact_dir = artifact_root / run_id
                     artifact_dir.mkdir()
                     text = narration_text(row["title"], row["body"])
-                    audio = artifact_dir / "narration.mp3"
+                    audio = (
+                        artifact_dir / f"narration{getattr(self.narrator, 'audio_suffix', '.mp3')}"
+                    )
                     self.report("  Generating narration and word timings...")
                     words = self.narrator.synthesize(text, audio)
                     duration = self.media.duration(self.media.probe(audio), "audio")
@@ -131,18 +128,22 @@ class Pipeline:
                     video, start = self.media.choose(videos, duration)
                     subtitles = artifact_dir / "captions.ass"
                     write_ass(words, subtitles, self.config, duration)
-                    final = self.output_dir / f"{run_id}.mp4"
+                    final_dir = self.output_dir / run_id
+                    final = final_dir / "with_voice.mp4"
+                    silent_final = final_dir / "without_voice.mp4"
                     metadata = {
                         "post_id": post_id,
                         "title": row["title"],
                         "url": row["url"],
                         "narration": text,
                         "voice": self.config.voice,
+                        "tts_engine": self.config.tts_engine,
                         "rate": self.config.rate,
                         "duration": duration,
                         "background": str(video.path),
                         "start": start,
                         "output": str(final),
+                        "silent_output": str(silent_final),
                         "words": [asdict(word) for word in words],
                     }
                     (artifact_dir / "manifest.json").write_text(
@@ -150,16 +151,23 @@ class Pipeline:
                         encoding="utf-8",
                     )
                     self.report(f"  Rendering {duration:.1f}s of captioned video...")
-                    # Render on the output filesystem, then publish atomically after verification.
+                    # Publish both verified files together by renaming their directory on
+                    # the output filesystem; a crash must not expose half a completed pair.
                     with tempfile.TemporaryDirectory(
                         prefix=".render-", dir=self.output_dir
                     ) as temp:
-                        partial = Path(temp) / "video.mp4"
+                        pair = Path(temp) / "pair"
+                        pair.mkdir()
+                        partial = pair / "with_voice.mp4"
                         self.media.render(video, start, audio, subtitles, partial, duration)
-                        os.replace(partial, final)
-                    self.store.mark(post_id, "ready", output=str(final))
+                        self.media.silent_copy(partial, pair / "without_voice.mp4", duration)
+                        os.replace(pair, final_dir)
+                    self.store.mark(
+                        post_id, "ready", output=str(final), silent_output=str(silent_final)
+                    )
                     result.ready += 1
                     self.report(f"  Ready: {final}")
+                    self.report(f"  Silent copy: {silent_final}")
                 except (AppError, OSError) as exc:
                     message = terminal_text(str(exc))
                     self.store.mark(post_id, "failed", error=message)

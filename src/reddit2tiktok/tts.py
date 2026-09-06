@@ -38,6 +38,8 @@ def validate_words(words: list[Word], duration: float | None = None) -> None:
 
 
 class EdgeNarrator:
+    audio_suffix = ".mp3"
+
     def __init__(self, voice: str, rate: str):
         self.voice, self.rate = voice, rate
 
@@ -82,7 +84,7 @@ class EdgeNarrator:
                 if attempt == 2:
                     raise AppError(
                         f"Speech generation failed after 3 attempts ({type(exc).__name__}). "
-                        "Check connectivity and the configured voice; use 'voices' to list voices."
+                        "Check connectivity and the voice; use 'voices --engine edge' to list voices."
                     ) from exc
                 await asyncio.sleep(2**attempt)
         raise AssertionError("unreachable")
@@ -95,3 +97,14 @@ async def available_voices() -> list[dict]:
         raise AppError(
             "Unable to fetch Microsoft's voice list. Check network connectivity."
         ) from exc
+
+
+def create_narrator(config, config_file: Path):
+    if config.tts_engine == "edge":
+        return EdgeNarrator(config.voice, config.rate)
+    from .config import resolve_path
+    from .kokoro_tts import KokoroNarrator
+
+    return KokoroNarrator(
+        config.voice, config.rate, resolve_path(config.data_dir, config_file) / "tts-cache"
+    )

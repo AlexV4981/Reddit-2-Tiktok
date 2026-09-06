@@ -8,13 +8,15 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 from .errors import AppError
+from .voices import KOKORO_VOICES
 
 
 @dataclass(frozen=True)
 class Config:
     video_dir: str
     verbose: bool = False
-    voice: str = "en-GB-RyanNeural"
+    voice: str = "bm_daniel"
+    tts_engine: str = "kokoro"
     rate: str = "+0%"
     data_dir: str = "data"
     output_dir: str = "ready4upload"
@@ -53,6 +55,12 @@ class Config:
                 )
         if type(self.verbose) is not bool:
             raise AppError("Config 'verbose' must be true or false.")
+        if not isinstance(self.tts_engine, str) or self.tts_engine not in {"kokoro", "edge"}:
+            raise AppError("Config 'tts_engine' must be 'kokoro' or 'edge'.")
+        if self.tts_engine == "kokoro" and self.voice not in KOKORO_VOICES:
+            raise AppError(
+                "Use a British Kokoro voice ID, such as bm_daniel, or select tts_engine=edge."
+            )
         if type(self.browser_headless) is not bool:
             raise AppError("Config 'browser_headless' must be true or false.")
         if not isinstance(self.reddit_frontend, str) or self.reddit_frontend not in {"old", "www"}:
@@ -110,6 +118,13 @@ def load_config(path: Path) -> Config:
         raise AppError("Configuration must be a JSON object.")
     # v0.1 migration: Selenium uses the browser's own user agent.
     data.pop("reddit_user_agent", None)
+    if "tts_engine" not in data:
+        data.setdefault("voice", "en-GB-RyanNeural")
+        data["tts_engine"] = (
+            "kokoro"
+            if isinstance(data["voice"], str) and data["voice"] in KOKORO_VOICES
+            else "edge"
+        )
     unknown = set(data) - {field.name for field in fields(Config)}
     if unknown:
         raise AppError(f"Unknown config keys: {', '.join(sorted(unknown))}")
