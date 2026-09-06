@@ -1,7 +1,8 @@
 # Daniel, Linux, and Docker
 
-Researched September 2026. This is a deployment/voice decision note, not an implemented
-alternative TTS provider. The working default remains `en-GB-RyanNeural` through `edge-tts`.
+Researched September 2026. The implemented default for new configurations is local
+**Kokoro `bm_daniel`**. The optional online `en-GB-RyanNeural` voice remains supported, and existing
+configurations keep their selected voice. Both engines save a narrated MP4 and a silent MP4.
 
 ## Identifying the installed Daniel voice
 
@@ -27,13 +28,27 @@ with the vendor before integration. No proprietary voice files are included here
 Sources: [Daniel in the Nuance catalog](https://docs.nuance.com/nuance-vocalizer-for-enterprise/voc-dev/lang.html),
 [Vocalizer platform and license requirements](https://docs.nuance.com/nuance-vocalizer-for-enterprise/voc-install/vocig-req.html).
 
-## Free/local alternative to audition
+## Implemented free/local alternative
 
 **Kokoro-82M `bm_daniel`** is a British male voice available for local TTS; its published model
 weights use Apache-2.0. It is a candidate to audition, **not a verified clone or acoustic match
 for Nuance/Windows Daniel**. `bm_george` and `bm_fable` are other British male candidates.
-Compare the same short story excerpt against the installed Daniel before choosing; the shared
-name is not evidence of shared sound. The current CLI does not accept these IDs as Edge voices.
+The shared name is not evidence of shared sound. Install the `kokoro` extra and English model
+as described in the README, then run:
+
+```sh
+reddit2tiktok config --tts-engine kokoro --voice bm_daniel
+reddit2tiktok voice-test
+reddit2tiktok voices --engine kokoro
+```
+
+This adapter runs on CPU, loads a pinned model revision into the configured data folder, and
+uses synthesis-derived word timings rather than equal-duration guesses. Multi-chunk narration
+offsets are calculated from the actual audio sample counts. The English pronunciation fallback
+is bundled through `espeakng-loader`; no host Windows voice installation is needed. Speech
+generation and a narrated/silent FFmpeg pair have been verified locally on Windows. Linux CI
+also exercises the actual model and both exports, independently of live Reddit access.
+Use the saved sample to judge the voice yourself; matching the original Daniel remains unverified.
 
 Sources: [Official model and local usage](https://huggingface.co/hexgrad/Kokoro-82M),
 [British voice catalog](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md),
@@ -57,6 +72,7 @@ Sources: [Docker Desktop WSL 2 backend](https://docs.docker.com/desktop/features
 [Connecting a container to a host service](https://docs.docker.com/desktop/features/networking/networking-how-tos/).
 
 Any future narrator adapter must produce **audio plus reliable word start/end timings** so
-captions remain synchronized. Simply saving a SAPI/Kokoro audio file or dividing the duration
-equally between words is not sufficient. Keep the existing Edge adapter until a replacement
-has been auditioned and its timing and deployment have been tested.
+captions remain synchronized. Simply saving a SAPI audio file or dividing the duration equally
+between words is not sufficient. The implemented Kokoro and Edge adapters both return word timing
+data; invalid timing prevents publishing either export. The silent export keeps the captions and
+video from the narrated export and removes all audio, including background audio.
