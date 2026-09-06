@@ -1,0 +1,49 @@
+name: Docker integration
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VIDEOS_DIR: ${{ github.workspace }}/.scratch/docker-videos
+      R2T_UID: '1001'
+      R2T_GID: '1001'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare repository-local test mounts
+        run: mkdir -p runtime "$VIDEOS_DIR"
+      - name: Validate and build production image
+        run: |
+          docker compose -p r2t-ci config --quiet
+          docker compose -p r2t-ci build app
+          docker build --target test -t reddit2tiktok-test:ci .
+      - name: Start isolated browser
+        run: docker compose -p r2t-ci up -d --wait browser
+      - name: Verify real browser, local speech, media and recovery inside Docker
+        run: |
+          docker run --rm --name r2t-test --network r2t-ci_default \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            -e R2T_REQUIRE_FFMPEG=1 -e R2T_REQUIRE_BROWSER=1 -e R2T_REQUIRE_LOCAL_TTS=1 \
+            -e R2T_TEST_REMOTE_URL=http://browser:4444 -e R2T_TEST_HTTP_HOST=r2t-test \
+            -e R2T_KOKORO_CACHE=/tmp/kokoro-cache reddit2tiktok-test:ci
+      - name: Verify production CLI and persistent configuration
+        run: |
+          docker compose -p r2t-ci run --rm -T --no-deps app --version
+          docker compose -p r2t-ci run --rm -T --no-deps app config \
+            --video-dir /videos --browser-remote-url http://browser:4444
+          docker compose -p r2t-ci run --rm -T --no-deps app config --show
+          test -f runtime/config.json
+      - name: Show browser logs on failure
+        if: failure()
+        run: docker compose -p r2t-ci logs --tail=100 browser
+      - name: Stop test containers
+        if: always()
+        run: |
+          docker rm -f r2t-test 2>/dev/null || true
+          docker compose -p r2t-ci down
