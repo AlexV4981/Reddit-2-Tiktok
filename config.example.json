@@ -9,6 +9,7 @@
   "reddit_frontend": "old",
   "browser_binary": "",
   "chromedriver": "",
+  "browser_remote_url": "",
   "browser_headless": true,
   "browser_timeout": 30,
   "scrape_delay": 1.0,

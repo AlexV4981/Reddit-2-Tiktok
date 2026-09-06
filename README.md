@@ -5,6 +5,10 @@ Revives [Reddit-Scraper-TTS-Python-Depracated](https://github.com/AlexV4981/Redd
 the menu and SQLite history remain, with **headless Selenium scraping**, speech, and FFmpeg rendering.
 No desktop session or Reddit API credentials are required.
 
+For a packaged setup on Linux or Windows with Docker Desktop in **Linux-container mode**, see
+[Docker CLI setup](docs/DOCKER.md). The image includes local speech and FFmpeg, with Selenium in
+an isolated browser container. It does not use or install host Windows voices.
+
 ## Install on a Linux server
 
 Requires Python 3.11+ (3.12 recommended for local speech), Chrome/Chromium, and FFmpeg with libass,
@@ -92,7 +96,7 @@ online engine sends narration text to Microsoft's Edge speech service, which can
 unavailable; errors are retryable. For an Edge-only installation, use `pip install -e .` and
 configure `--tts-engine edge`, omitting the local speech installation steps above. Each engine
 produces the same pair of exports. See [Daniel and Docker voice options](docs/VOICE_OPTIONS.md).
-Docker packaging remains the next deployment step after this Selenium/local-speech revision.
+The [Docker setup](docs/DOCKER.md) uses this same local voice and paired-export pipeline.
 
 ## Commands for SSH and unattended use
 
@@ -156,6 +160,9 @@ Chrome uses a fresh temporary profile per scrape; it does not open your personal
 reuse its cookies, or require a GUI. `browser_timeout` controls page/DOM waits (30 seconds by
 default), and `scrape_delay` spaces post/page navigation (1 second by default). The scraper
 checks at most five listing batches; small communities can return fewer than ten posts.
+When `browser_remote_url` is configured, Selenium instead creates a fresh session on that private
+Grid endpoint; no local browser/driver is downloaded and no host profile is uploaded. Do not expose
+an unauthenticated Grid to the internet. Local executable settings and a remote URL cannot be combined.
 
 Reddit may still block anonymous browsers or server IPs. Network blocks, verification, private
 communities, and unexpected layouts fail with guidance; **Selenium does not bypass access
@@ -250,6 +257,10 @@ Omit both browser paths to test managed downloads, or supply only the browser pa
 obtain the driver. Linux CI requires real browser and media tests on Python 3.11–3.13; missing
 tools fail rather than silently skip. A separate Python 3.12 Linux job requires real local speech
 and both MP4 exports. No test attempts to bypass a Reddit restriction.
+
+Docker CI builds the actual production image, runs the full suite with the separate browser
+container, and additionally exercises **Selenium → full story → local Kokoro → both MP4s**.
+Container tests use local HTML fixtures, never a Reddit account or a bypass of live restrictions.
 
 References: [Selenium Manager](https://www.selenium.dev/documentation/selenium_manager/),
 [edge-tts](https://github.com/rany2/edge-tts),

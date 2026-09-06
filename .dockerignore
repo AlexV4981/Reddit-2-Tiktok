@@ -1,0 +1,9 @@
+**
+!Dockerfile
+!pyproject.toml
+!README.md
+!src/
+!src/reddit2tiktok/
+!src/reddit2tiktok/*.py
+!tests/
+!tests/*.py
