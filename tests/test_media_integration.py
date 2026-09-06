@@ -110,6 +110,9 @@ def test_real_scrape_render_captions_audio_and_dedup(
     assert row["body"] == post.body
     assert post.title in calls[0] and post.body in calls[0]
     final = Path(row["output_path"])
+    silent = Path(row["silent_output_path"])
+    assert final.parent == silent.parent
+    assert final.name == "with_voice.mp4" and silent.name == "without_voice.mp4"
     media = Media(config)
     info = media.probe(final)
     video = next(s for s in info["streams"] if s["codec_type"] == "video")
@@ -119,6 +122,29 @@ def test_real_scrape_render_captions_audio_and_dedup(
     assert audio["codec_name"] == "aac"
     assert video["pix_fmt"] == "yuv420p"
     assert video["avg_frame_rate"] == "24/1"
+    silent_info = media.probe(silent)
+    assert not any(s["codec_type"] == "audio" for s in silent_info["streams"])
+    assert media.duration(silent_info, "video") == media.duration(info, "video")
+
+    def video_hash(path):
+        return run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "copy",
+                "-f",
+                "hash",
+                "-",
+            ]
+        )
+
+    assert video_hash(final) == video_hash(silent)
     manifest = json.loads(
         next((tmp_path / "data" / "artifacts").glob("*/manifest.json")).read_text()
     )
@@ -189,7 +215,7 @@ def test_real_scrape_render_captions_audio_and_dedup(
     assert 850 < frequency < 910
     assert main(args) == 0
     assert len(calls) == 1
-    assert len(list((tmp_path / "ready4upload").glob("*.mp4"))) == 1
+    assert len(list((tmp_path / "ready4upload").rglob("*.mp4"))) == 2
     assert "Already ready" in capsys.readouterr().out
 
 

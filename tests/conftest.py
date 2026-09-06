@@ -17,7 +17,14 @@ def config(tmp_path):
     videos = tmp_path / "background clips"
     videos.mkdir()
     return Config(
-        video_dir=str(videos), width=360, height=640, fps=24, font_size=40, preset="ultrafast"
+        video_dir=str(videos),
+        width=360,
+        height=640,
+        fps=24,
+        font_size=40,
+        preset="ultrafast",
+        tts_engine="edge",
+        voice="en-GB-RyanNeural",
     )
 
 

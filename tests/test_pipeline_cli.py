@@ -42,6 +42,9 @@ class FakeMedia:
     def render(self, background, start, audio, subtitles, output, duration):
         output.write_bytes(b"verified video fixture")
 
+    def silent_copy(self, narrated, output, duration):
+        output.write_bytes(b"verified silent fixture")
+
 
 def test_pipeline_publish_skip_force_and_manifest(config, tmp_path, post):
     store = Store(tmp_path / "data" / "posts.sqlite3")
@@ -52,8 +55,12 @@ def test_pipeline_publish_skip_force_and_manifest(config, tmp_path, post):
     )
     assert pipeline.render([post.id]).ready == 1
     first = Path(store.get(post.id)["output_path"])
-    assert first.parent == tmp_path / "ready4upload"
+    assert first.parent.parent == tmp_path / "ready4upload"
     assert first.read_bytes() == b"verified video fixture"
+    assert first.name == "with_voice.mp4"
+    silent = Path(store.get(post.id)["silent_output_path"])
+    assert silent == first.with_name("without_voice.mp4")
+    assert silent.read_bytes() == b"verified silent fixture"
     manifest = json.loads(
         next((tmp_path / "data" / "artifacts").glob("*/manifest.json")).read_text()
     )
@@ -86,7 +93,7 @@ def test_failed_output_is_not_published_and_batch_continues(config, tmp_path, po
     result = pipeline.render([post.id, second.id])
     assert (result.ready, result.failed) == (1, 1)
     assert store.get(post.id)["status"] == "failed"
-    assert len(list((tmp_path / "ready4upload").glob("*.mp4"))) == 1
+    assert len(list((tmp_path / "ready4upload").rglob("*.mp4"))) == 2
     assert not list((tmp_path / "ready4upload").glob(".render-*"))
     assert pipeline.render([post.id]).ready == 1
 
@@ -129,7 +136,8 @@ def test_first_run_wizard(config, tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     result = wizard(path)
     assert result.verbose is False
-    assert result.voice == "en-GB-RyanNeural"
+    assert result.voice == "bm_daniel"
+    assert result.tts_engine == "kokoro"
     assert load_config(path) == result
 
 
