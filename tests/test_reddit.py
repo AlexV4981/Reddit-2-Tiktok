@@ -118,6 +118,7 @@ def fake_browser(driver):
 
 def client_with_pages(config, tmp_path, pages):
     driver = MagicMock()
+    driver.current_url = BASE
     driver.get.side_effect = lambda url: setattr(driver, "page_source", pages(url))
     config = replace(config, scrape_delay=0, browser_timeout=1)
     client = RedditClient(
@@ -181,6 +182,16 @@ def test_driver_failure_is_actionable_and_closed(config, tmp_path):
     client, driver = client_with_pages(config, tmp_path, lambda _: "")
     driver.get.side_effect = WebDriverException("browser gone")
     with pytest.raises(AppError, match="doctor --browser"):
+        client.top_week("stories")
+    driver.quit.assert_called_once()
+
+
+def test_login_redirect_is_reported_without_waiting_for_missing_posts(config, tmp_path):
+    client, driver = client_with_pages(
+        config, tmp_path, lambda _: "<title>Welcome to Reddit</title>"
+    )
+    driver.current_url = "https://old.reddit.com/login/?reason=lor2"
+    with pytest.raises(AppError, match="requires login"):
         client.top_week("stories")
     driver.quit.assert_called_once()
 

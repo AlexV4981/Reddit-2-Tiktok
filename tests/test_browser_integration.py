@@ -14,6 +14,26 @@ from tests.html_pages import delayed, legacy_card, modern_card
 pytestmark = pytest.mark.browser
 
 
+def test_real_browser_reports_javascript_login_redirect(
+    browser_config, tmp_path, html_server, monkeypatch, capsys
+):
+    base, routes, _ = html_server
+    routes["/r/stories/top/?t=week&limit=10"] = (
+        '<script>window.location.replace("/login/?reason=lor2")</script>'
+    )
+    routes["/login/?reason=lor2"] = "<title>Welcome to Reddit</title>"
+    path = tmp_path / "config.json"
+    save_config(path, browser_config)
+    monkeypatch.setattr(
+        "reddit2tiktok.cli.RedditClient",
+        lambda config, file: RedditClient(config, file, base_url=base),
+    )
+    assert main(["--config", str(path), "scrape", "stories", "--scrape-only"]) == 1
+    assert "requires login" in capsys.readouterr().err
+    assert Store(tmp_path / "data" / "posts.sqlite3").all() == []
+    assert not list((tmp_path / "data" / "browser-profiles").iterdir())
+
+
 @pytest.mark.parametrize("card", [legacy_card, modern_card])
 def test_real_browser_waits_for_dom_paginates_and_saves_full_top_ten(
     browser_config,
