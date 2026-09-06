@@ -56,6 +56,10 @@ Sources: [Official model and local usage](https://huggingface.co/hexgrad/Kokoro-
 
 ## What Docker changes (and what it does not)
 
+The repository now includes a [Linux-container CLI deployment](DOCKER.md), using local Kokoro
+speech and a separate Selenium browser. The Windows-host route is Docker Desktop in Linux-container
+mode, not a Windows container image. No host SAPI bridge or proprietary voice package is installed.
+
 - Docker Desktop's Linux containers on Windows still run in a Linux environment. They cannot
   directly call a host Windows SAPI voice merely because Docker runs on Windows.
 - Windows containers start from a Windows container base image, not a copy of the desktop's
