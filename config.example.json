@@ -1,0 +1,20 @@
+{
+  "video_dir": "/srv/reddit2tiktok/videos",
+  "verbose": false,
+  "voice": "en-GB-RyanNeural",
+  "rate": "+0%",
+  "data_dir": "data",
+  "output_dir": "ready4upload",
+  "reddit_user_agent": "linux:reddit2tiktok:0.1.0 (by /u/AlexV4981)",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "font": "DejaVu Sans",
+  "font_size": 88,
+  "caption_y": 0.62,
+  "crf": 20,
+  "preset": "medium",
+  "ffmpeg": "ffmpeg",
+  "ffprobe": "ffprobe"
+}
+
