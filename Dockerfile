@@ -4,7 +4,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md config.example.json ./
 COPY src/reddit2tiktok/ ./src/reddit2tiktok/
 RUN python -m pip install torch --index-url https://download.pytorch.org/whl/cpu \
     && python -m pip install '.[kokoro]' \

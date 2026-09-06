@@ -2,6 +2,7 @@
 !Dockerfile
 !pyproject.toml
 !README.md
+!config.example.json
 !src/
 !src/reddit2tiktok/
 !src/reddit2tiktok/*.py
