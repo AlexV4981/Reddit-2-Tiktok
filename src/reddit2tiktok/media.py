@@ -152,6 +152,9 @@ class Media:
         if subtitles.name != "captions.ass":
             raise AppError("Internal subtitle filename must be captions.ass.")
         filters = (
+            # A seek between source frames can leave a positive first PTS. Without
+            # rebasing it, a video-only remux may shift the captions by one frame.
+            "setpts=PTS-STARTPTS,"
             f"scale={cfg.width}:{cfg.height}:force_original_aspect_ratio=increase,"
             f"crop={cfg.width}:{cfg.height},setsar=1,fps={cfg.fps},ass=captions.ass"
         )
@@ -239,6 +242,12 @@ class Media:
             "h264",
         ):
             raise AppError("Rendered video failed the resolution/codec check.")
+        try:
+            origin = float(video.get("start_time", 0))
+            if not math.isfinite(origin) or abs(origin) > 0.001:
+                raise ValueError("nonzero video origin")
+        except (ValueError, TypeError) as exc:
+            raise AppError("Rendered video does not start at zero; export rejected.") from exc
         if not with_audio and any(s.get("codec_type") == "audio" for s in info["streams"]):
             raise AppError("Silent export unexpectedly contains audio; export rejected.")
         for stream in ("video", "audio") if with_audio else ("video",):
