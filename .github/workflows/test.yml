@@ -32,3 +32,25 @@ jobs:
         run: pytest -q
       - name: CLI smoke test
         run: reddit2tiktok --help
+  local-voice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install media tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: Install CPU-only local speech engine
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e '.[dev,kokoro]'
+          python -m spacy download en_core_web_sm
+          python -m pip check
+      - name: Generate real speech and verify both exports
+        env:
+          R2T_REQUIRE_LOCAL_TTS: '1'
+          R2T_REQUIRE_FFMPEG: '1'
+          R2T_KOKORO_CACHE: .scratch/kokoro-cache
+        run: pytest -q -m local_tts
