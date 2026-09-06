@@ -54,6 +54,8 @@ def media_tools():
 
 @pytest.fixture(scope="session")
 def browser_binaries(tmp_path_factory):
+    if os.environ.get("R2T_TEST_REMOTE_URL"):
+        return "", ""
     binary = os.environ.get("R2T_CHROME_BINARY", "")
     driver = os.environ.get("R2T_CHROMEDRIVER", "")
     if not (binary and driver) and os.environ.get("R2T_REQUIRE_BROWSER") != "1":
@@ -69,7 +71,12 @@ def browser_binaries(tmp_path_factory):
 def browser_config(config, browser_binaries):
     binary, driver = browser_binaries
     return replace(
-        config, browser_binary=binary, chromedriver=driver, scrape_delay=0, browser_timeout=5
+        config,
+        browser_binary=binary,
+        chromedriver=driver,
+        scrape_delay=0,
+        browser_timeout=5,
+        browser_remote_url=os.environ.get("R2T_TEST_REMOTE_URL", ""),
     )
 
 
@@ -89,11 +96,12 @@ def html_server():
         def log_message(self, *args):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    host = os.environ.get("R2T_TEST_HTTP_HOST", "127.0.0.1")
+    server = ThreadingHTTPServer(("0.0.0.0" if host != "127.0.0.1" else host, 0), Handler)
     worker = Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}", routes, visits
+        yield f"http://{host}:{server.server_port}", routes, visits
     finally:
         server.shutdown()
         server.server_close()

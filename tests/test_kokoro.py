@@ -10,8 +10,10 @@ from reddit2tiktok.errors import AppError
 from reddit2tiktok.kokoro_tts import KokoroNarrator, token_words
 from reddit2tiktok.media import Media, run
 from reddit2tiktok.pipeline import Pipeline
+from reddit2tiktok.reddit import RedditClient
 from reddit2tiktok.store import Store
 from reddit2tiktok.tts import Word, create_narrator, validate_words
+from tests.html_pages import legacy_card
 
 
 def token(text, start=0.1, end=0.4, whitespace=" ", phonemes="test"):
@@ -86,6 +88,28 @@ def test_real_local_speech_multi_chunk_word_timing(local_narrator, tmp_path):
 def test_real_local_voice_renders_narrated_and_silent_pair(
     config, tmp_path, post, media_tools, local_narrator
 ):
+    check_local_pair(config, tmp_path, post, media_tools, local_narrator)
+
+
+@pytest.mark.local_tts
+@pytest.mark.browser
+@pytest.mark.integration
+def test_real_browser_to_local_speech_to_two_exports(
+    browser_config, tmp_path, html_server, media_tools, local_narrator
+):
+    base, routes, _ = html_server
+    routes["/r/stories/top/?t=week&limit=10"] = legacy_card("abc123", "Preview")
+    routes["/r/stories/comments/abc123/story/"] = legacy_card(
+        "abc123", "Then something surprising happened."
+    )
+    posts = RedditClient(browser_config, tmp_path / "config.json", base_url=base).top_week(
+        "stories"
+    )
+    assert len(posts) == 1 and posts[0].body == "Then something surprising happened."
+    check_local_pair(browser_config, tmp_path, posts[0], media_tools, local_narrator)
+
+
+def check_local_pair(config, tmp_path, post, media_tools, local_narrator):
     ffmpeg, ffprobe = media_tools
     config = replace(config, tts_engine="kokoro", voice="bm_daniel", ffmpeg=ffmpeg, ffprobe=ffprobe)
     run(

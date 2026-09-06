@@ -31,7 +31,7 @@ def test_real_browser_reports_javascript_login_redirect(
     assert main(["--config", str(path), "scrape", "stories", "--scrape-only"]) == 1
     assert "requires login" in capsys.readouterr().err
     assert Store(tmp_path / "data" / "posts.sqlite3").all() == []
-    assert not list((tmp_path / "data" / "browser-profiles").iterdir())
+    assert not list((tmp_path / "data" / "browser-profiles").glob("*"))
 
 
 @pytest.mark.parametrize("card", [legacy_card, modern_card])
@@ -72,7 +72,7 @@ def test_real_browser_waits_for_dom_paginates_and_saves_full_top_ten(
         if "/top/" in url:
             assert parse_qs(urlsplit(url).query)["t"] == ["week"]
     assert len([url for url in visits if "/comments/" in url]) == 10
-    assert not list((tmp_path / "data" / "browser-profiles").iterdir())
+    assert not list((tmp_path / "data" / "browser-profiles").glob("*"))
 
 
 def test_real_browser_partial_scrape_not_saved_after_detail_block(
@@ -95,4 +95,4 @@ def test_real_browser_partial_scrape_not_saved_after_detail_block(
     assert main(["--config", str(path), "scrape", "stories", "--scrape-only"]) == 1
     assert "blocked" in capsys.readouterr().err
     assert Store(tmp_path / "data" / "posts.sqlite3").all() == []
-    assert not list((tmp_path / "data" / "browser-profiles").iterdir())
+    assert not list((tmp_path / "data" / "browser-profiles").glob("*"))
