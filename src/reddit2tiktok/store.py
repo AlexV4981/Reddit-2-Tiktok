@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from .reddit import Post
+from .models import Post
 
 
 class Store:

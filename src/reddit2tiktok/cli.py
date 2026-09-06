@@ -8,7 +8,10 @@ import sys
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from selenium.common.exceptions import WebDriverException
+
 from . import __version__
+from .browser import open_browser
 from .config import Config, load_config, resolve_path, save_config
 from .errors import AppError
 from .media import Media
@@ -69,7 +72,8 @@ def print_posts(rows: list[dict], verbose: bool, *, details: bool = False) -> No
 def scrape(config: Config, path: Path, store: Store, name: str, scrape_only: bool = False) -> int:
     name = subreddit_name(name)
     print(f"Fetching the top 10 posts this week from r/{name}...")
-    posts = RedditClient(config.reddit_user_agent).top_week(name)
+    print("Starting Selenium Chrome (the first run may download Chrome and its driver)...")
+    posts = RedditClient(config, path).top_week(name)
     added = store.save(posts)
     print(f"Fetched {len(posts)} posts; saved {added} new posts.")
     if not posts:
@@ -155,6 +159,11 @@ def parser() -> argparse.ArgumentParser:
     config.add_argument("--video-dir", help="set the explicit input folder without prompts")
     config.add_argument("--voice", help="Microsoft voice ID, default en-GB-RyanNeural")
     config.add_argument(
+        "--browser-binary", help="path to Chrome/Chromium, or empty for managed Chrome"
+    )
+    config.add_argument("--chromedriver", help="path to a matching ChromeDriver")
+    config.add_argument("--reddit-frontend", choices=["old", "www"], help="Reddit HTML interface")
+    config.add_argument(
         "--rate", help="speech rate, for example +10%% (use --rate=-10%% for negative)"
     )
     config.add_argument("--show", action="store_true", help="print current configuration")
@@ -171,7 +180,10 @@ def parser() -> argparse.ArgumentParser:
     rendering.add_argument(
         "--force", action="store_true", help="create new versions of completed videos"
     )
-    commands.add_parser("doctor", help="check local media tools and background videos")
+    doctor = commands.add_parser("doctor", help="check local media tools and background videos")
+    doctor.add_argument(
+        "--browser", action="store_true", help="also launch and verify Selenium Chrome"
+    )
     voices = commands.add_parser("voices", help="list voices from the online speech service")
     voices.add_argument("--locale", default="en-GB")
     return root
@@ -194,14 +206,21 @@ def main(argv: list[str] | None = None) -> int:
                     raise AppError("No configuration yet. Run the config command first.")
                 print(json.dumps(asdict(config), indent=2))
                 return 0
-            if args.video_dir or args.voice or args.rate or args.verbose is not None:
+            config_keys = (
+                "video_dir",
+                "voice",
+                "rate",
+                "verbose",
+                "browser_binary",
+                "chromedriver",
+                "reddit_frontend",
+            )
+            if any(getattr(args, key) is not None for key in config_keys):
                 if config is None and not args.video_dir:
                     raise AppError("First configuration requires --video-dir /path/to/videos.")
                 config = config or Config(video_dir=args.video_dir)
                 changes = {
-                    key: getattr(args, key)
-                    for key in ("video_dir", "voice", "rate", "verbose")
-                    if getattr(args, key) is not None
+                    key: getattr(args, key) for key in config_keys if getattr(args, key) is not None
                 }
                 if "video_dir" in changes:
                     changes["video_dir"] = str(resolve_path(changes["video_dir"], path))
@@ -237,6 +256,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(terminal_text(warning))
             print(f"FFmpeg, libass, H.264 and AAC OK; {len(videos)} readable background videos.")
             print(f"Longest background: {max(v.duration for v in videos):.1f}s")
+            if args.browser:
+                with open_browser(config, path) as driver:
+                    driver.get("data:text/html,<title>Browser check</title>")
+                    if driver.title != "Browser check":
+                        raise AppError("Selenium Chrome did not load the browser check page.")
+                    print(f"Selenium Chrome {driver.capabilities.get('browserVersion', '')} OK.")
             print(f"Voice: {config.voice}. Network services are checked when used.")
             return 0
         store = Store(resolve_path(config.data_dir, path) / "posts.sqlite3")
@@ -257,6 +282,12 @@ def main(argv: list[str] | None = None) -> int:
                 name = input("Subreddit: ")
             return scrape(config, path, store, name, args.scrape_only)
         return 0
+    except WebDriverException:
+        print(
+            "Error: Selenium Chrome failed. Check browser setup with doctor --browser.",
+            file=sys.stderr,
+        )
+        return 1
     except (AppError, OSError, sqlite3.Error, ValueError) as exc:
         print(f"Error: {terminal_text(str(exc))}", file=sys.stderr)
         return 1

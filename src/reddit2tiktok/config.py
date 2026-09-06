@@ -18,7 +18,12 @@ class Config:
     rate: str = "+0%"
     data_dir: str = "data"
     output_dir: str = "ready4upload"
-    reddit_user_agent: str = "linux:reddit2tiktok:0.1.0 (by /u/AlexV4981)"
+    reddit_frontend: str = "old"
+    browser_binary: str = ""
+    chromedriver: str = ""
+    browser_headless: bool = True
+    browser_timeout: int = 30
+    scrape_delay: float = 1.0
     width: int = 1080
     height: int = 1920
     fps: int = 30
@@ -37,7 +42,6 @@ class Config:
             "rate",
             "data_dir",
             "output_dir",
-            "reddit_user_agent",
             "font",
             "ffmpeg",
             "ffprobe",
@@ -49,12 +53,23 @@ class Config:
                 )
         if type(self.verbose) is not bool:
             raise AppError("Config 'verbose' must be true or false.")
+        if type(self.browser_headless) is not bool:
+            raise AppError("Config 'browser_headless' must be true or false.")
+        if not isinstance(self.reddit_frontend, str) or self.reddit_frontend not in {"old", "www"}:
+            raise AppError("Config 'reddit_frontend' must be 'old' or 'www'.")
+        for key in ("browser_binary", "chromedriver"):
+            value = getattr(self, key)
+            if not isinstance(value, str) or any(ord(c) < 32 for c in value):
+                raise AppError(f"Config '{key}' must be an executable path or an empty string.")
+        if type(self.scrape_delay) not in (int, float) or not 0 <= self.scrape_delay <= 60:
+            raise AppError("Config 'scrape_delay' must be between 0 and 60 seconds.")
         for key, low, high in (
             ("width", 144, 2160),
             ("height", 256, 3840),
             ("fps", 1, 60),
             ("font_size", 12, 250),
             ("crf", 0, 51),
+            ("browser_timeout", 1, 120),
         ):
             value = getattr(self, key)
             if type(value) is not int or not low <= value <= high:
@@ -93,6 +108,8 @@ def load_config(path: Path) -> Config:
         raise AppError(f"Cannot read configuration at {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise AppError("Configuration must be a JSON object.")
+    # v0.1 migration: Selenium uses the browser's own user agent.
+    data.pop("reddit_user_agent", None)
     unknown = set(data) - {field.name for field in fields(Config)}
     if unknown:
         raise AppError(f"Unknown config keys: {', '.join(sorted(unknown))}")
