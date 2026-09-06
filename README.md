@@ -7,8 +7,10 @@ No desktop session or Reddit API credentials are required.
 
 ## Install on a Linux server
 
-Requires Python 3.11+, Chrome/Chromium, internet access for Reddit/TTS, and FFmpeg with libass,
-libx264, and AAC. A headless browser needs its normal Linux libraries even without a GUI.
+Requires Python 3.11+ (3.12 recommended for local speech), Chrome/Chromium, and FFmpeg with libass,
+libx264, and AAC. Internet is needed for Reddit and the first local voice download; local narration
+then runs on CPU without sending story text to a speech service. Allow several GB for dependencies,
+models, and working memory. A headless browser needs its normal Linux libraries even without a GUI.
 For example, on Debian 12+ (the Chromium packages also install those libraries):
 
 ```sh
@@ -18,10 +20,13 @@ git clone https://github.com/AlexV4981/Reddit-2-Tiktok.git
 cd Reddit-2-Tiktok
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e .
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -e '.[kokoro]'
+python -m spacy download en_core_web_sm
 reddit2tiktok config
 reddit2tiktok config --browser-binary /usr/bin/chromium --chromedriver /usr/bin/chromedriver
 reddit2tiktok doctor --browser
+reddit2tiktok voice-test
 reddit2tiktok
 ```
 
@@ -58,12 +63,15 @@ Progress, errors, and output filenames are displayed in both modes.
 2. Opens each selected post to read its **full body**, rather than using a truncated feed preview,
    then closes the browser. Comments and nested crosspost cards are not scraped as stories.
 3. Saves the title, body, link, and original metadata in SQLite, deduplicated by Reddit ID.
-4. Narrates the title followed by the body with **en-GB-RyanNeural**, the selected British male voice.
-5. Uses the speech service's **word boundary timestamps**, including speech pauses, for captions.
+4. Narrates the title followed by the body with local **Kokoro `bm_daniel`**, a British male voice.
+5. Uses **model-derived word timestamps**, including pauses and real audio chunk offsets, for captions.
+   Missing or invalid timing fails the export instead of estimating each word's duration.
 6. Randomly picks a background long enough for the measured audio and a valid starting point.
 7. Center-crops the clip to **1080×1920 at 30fps**, removes background audio, and adds narration
    plus centered yellow captions with a black outline and a subtle pop, one word at a time.
-8. Verifies the resulting media and atomically publishes the H.264/AAC MP4 in **ready4upload/**.
+8. Verifies and atomically publishes **two MP4s** in a story/run folder under **ready4upload/**:
+   `with_voice.mp4` (H.264/AAC) and `without_voice.mp4` (H.264, no audio stream). The silent copy
+   retains exactly the same video frames and burned-in captions; only the audio is removed.
 
 The selected top posts are saved; image/link/deleted posts without a usable story body are marked
 skipped, so a batch can produce fewer than ten videos. Short backgrounds are excluded. If none
@@ -71,24 +79,33 @@ are long enough, the post fails with the required duration so you can add a long
 Completed posts are skipped on repeat runs. A failed post does not stop the rest of the batch.
 Post history is retained after rendering; repeated scrapes preserve the first saved snapshot.
 
-Ryan was chosen for this revival. It is **not Daniel**. The old Windows `pyttsx3` setup does
-not provide that voice on a Linux server. This version uses the online Microsoft Edge speech
-service through `edge-tts`, so neither Windows nor a desktop session is required. The service
-can change or become unavailable; failures are reported and retryable. Narration text is sent
-to that service.
-See [Daniel and Docker voice options](docs/VOICE_OPTIONS.md) for the exact-voice route and
-Linux-compatible alternatives. Docker packaging is a separate follow-up; this revision does
-not add a container or change the accepted Ryan default.
+Kokoro's **`bm_daniel` is not a verified match for Windows/Nuance Daniel**; the shared name does
+not imply the same voice. It is an installable British alternative, now the default for new
+configurations. `voice-test` saves a short sample so you can audition it. Model files are pinned
+to a specific publisher revision and cached under `data/tts-cache/`. English pronunciation tools
+are installed in the virtual environment, not registered as Windows system voices. After the
+first model download, `HF_HUB_OFFLINE=1` can enforce offline local speech; scraping still needs
+internet. No GPU, account, API key, or desktop session is required for local narration.
+
+The previous **en-GB-RyanNeural** voice remains available with `--tts-engine edge`. That optional
+online engine sends narration text to Microsoft's Edge speech service, which can change or become
+unavailable; errors are retryable. For an Edge-only installation, use `pip install -e .` and
+configure `--tts-engine edge`, omitting the local speech installation steps above. Each engine
+produces the same pair of exports. See [Daniel and Docker voice options](docs/VOICE_OPTIONS.md).
+Docker packaging remains the next deployment step after this Selenium/local-speech revision.
 
 ## Commands for SSH and unattended use
 
 ```sh
 # Configure without prompts. Relative paths resolve beside the configuration file.
 reddit2tiktok --verbose config --video-dir /srv/background-videos
-reddit2tiktok --quiet config --voice en-GB-RyanNeural --rate=+10%
+reddit2tiktok --quiet config --tts-engine kokoro --voice bm_daniel --rate=+10%
+# Optional online voice instead:
+reddit2tiktok config --tts-engine edge --voice en-GB-RyanNeural
 reddit2tiktok config --show
 reddit2tiktok doctor
 reddit2tiktok doctor --browser
+reddit2tiktok voice-test
 
 # Scrape and render this week's top ten
 reddit2tiktok scrape AmItheAsshole
@@ -107,8 +124,9 @@ reddit2tiktok posts --json
 reddit2tiktok render POST_ID
 reddit2tiktok render POST_ID --force
 
-# List currently available voices
-reddit2tiktok voices --locale en-GB
+# List local British voices without network access, or query the online catalog
+reddit2tiktok voices --engine kokoro
+reddit2tiktok voices --engine edge --locale en-GB
 
 # Fixed config location when run by a scheduler
 /srv/Reddit-2-Tiktok/.venv/bin/reddit2tiktok \
@@ -146,6 +164,13 @@ If a selected post cannot be loaded, the new scrape is not partially saved. Exis
 and finished videos are retained. Live Reddit access is separate from the offline test suite
 and is not guaranteed by passing tests. Respect Reddit's rules and the rights of story authors.
 
+A live check on September 6, 2026 redirected this test network's `old.reddit.com` weekly listing
+to Reddit's login page (`reason=lor2`). The CLI reports this as a **login-required error**;
+it does not claim the scrape succeeded. Authenticated scraping/session import is not implemented
+in this revision. A personal browser login is not automatically shared with Selenium's isolated
+profile. Scraping remains **anonymous-only**, as requested. Live collection still needs
+verification from a network where Reddit permits anonymous access.
+
 ## Files and configuration
 
 ```text
@@ -153,8 +178,12 @@ config.json                  # first-run choices, ignored by Git
 data/posts.sqlite3           # saved stories and processing state
 data/browser-cache/         # managed browser/driver downloads, when needed
 data/browser-profiles/      # temporary scrape profiles (removed when the browser closes)
-data/artifacts/<id>-<run>/   # narration.mp3, captions.ass, manifest.json
-ready4upload/<id>-<run>.mp4   # verified finished videos
+data/tts-cache/             # pinned local voice/model downloads
+data/voice-test/            # short audition audio and word timestamps
+data/artifacts/<id>-<run>/   # narration.wav (or .mp3), captions.ass, manifest.json
+ready4upload/<id>-<run>/
+  with_voice.mp4            # narration + captions + background
+  without_voice.mp4         # identical captioned video, completely silent
 ```
 
 The manifest records the narration, word timestamps, voice, source link, background, and
@@ -170,10 +199,16 @@ folder. Dimensions must be even and 9:16; `720×1280` can reduce CPU cost. `capt
 vertical position (0.62 by default); `font_size`, `font`, `rate`, `crf`, and `preset` are adjustable.
 Use footage and stories you have permission to publish. Uploading to TikTok is a manual step.
 
-### Upgrading from v0.1
+### Upgrading from v0.1/v0.2
 
-Run `pip install -e .` again to install Selenium and Beautiful Soup. Existing `config.json` and
-SQLite post history remain usable; no database reset is needed. The old `reddit_user_agent`
+Repeat the installation steps above to add Selenium and local speech. Existing `config.json` and
+SQLite post history remain usable; no database reset is needed. Existing Ryan/Edge configurations
+keep that voice rather than silently switching. To choose the installed local voice, run
+`reddit2tiktok config --tts-engine kokoro --voice bm_daniel`, then `reddit2tiktok voice-test`.
+SQLite automatically adds the silent-output column without discarding posts. Old single-file
+exports remain on disk; `render` regenerates posts missing either member of the new pair.
+Forced re-renders publish a new pair and preserve earlier files, including after a failed retry.
+The old `reddit_user_agent`
 setting is accepted and ignored, then removed on the next configuration save. The obsolete
 `.env.example` has been removed; `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` are no longer used.
 Your own `.env` file is not modified. Previously saved posts keep their original bodies and status.
@@ -196,21 +231,28 @@ Unit tests cover both HTML layouts, weekly pagination, full bodies, deduplicatio
 browser cleanup, config migration, storage, speech boundaries, and recovery. Browser tests launch
 **real Selenium Chrome against a local HTTP fixture server**, including JavaScript-delayed posts.
 An end-to-end test runs Selenium → SQLite → deterministic test audio → real FFmpeg → verified MP4,
-checking audio replacement and actual burned-in caption frames. TTS is stubbed so tests do not
-send stories to an external service. No accounts or Reddit credentials are needed.
+checking audio replacement and actual burned-in caption frames. The ordinary tests use deterministic
+audio and never send stories to a speech service. Additional opt-in tests generate **real Kokoro
+speech**, verify multi-chunk word timing, and render both exports, checking equal video hashes and
+no audio in the silent copy. No accounts or Reddit credentials are needed.
 
 Media tests skip locally if FFmpeg is absent. Browser tests are opt-in locally:
 
 ```sh
 R2T_REQUIRE_FFMPEG=1 R2T_REQUIRE_BROWSER=1 \
 R2T_CHROME_BINARY=/usr/bin/chromium R2T_CHROMEDRIVER=/usr/bin/chromedriver pytest -q
+
+# After installing the local speech dependencies and English model:
+R2T_REQUIRE_LOCAL_TTS=1 R2T_REQUIRE_FFMPEG=1 pytest -q -m local_tts
 ```
 
 Omit both browser paths to test managed downloads, or supply only the browser path to let Manager
 obtain the driver. Linux CI requires real browser and media tests on Python 3.11–3.13; missing
-tools fail rather than silently skip. No test attempts to bypass a Reddit restriction.
+tools fail rather than silently skip. A separate Python 3.12 Linux job requires real local speech
+and both MP4 exports. No test attempts to bypass a Reddit restriction.
 
 References: [Selenium Manager](https://www.selenium.dev/documentation/selenium_manager/),
 [edge-tts](https://github.com/rany2/edge-tts),
+[Kokoro local TTS](https://github.com/hexgrad/kokoro),
 [Microsoft voice catalog](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support),
 [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html).

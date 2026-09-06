@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reddit2tiktok"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Linux CLI for turning Reddit stories into captioned vertical videos"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+kokoro = ["kokoro==0.9.4", "transformers>=4.48,<5", "soundfile>=0.13,<1", "espeakng-loader>=0.2.4,<1"]
 
 [project.scripts]
 reddit2tiktok = "reddit2tiktok.cli:main"
@@ -29,6 +30,7 @@ testpaths = ["tests"]
 markers = [
   "integration: renders actual media with FFmpeg (no network)",
   "browser: uses real Selenium Chrome against local HTML fixtures",
+  "local_tts: generates actual speech with the optional local Kokoro model",
 ]
 
 [tool.ruff]

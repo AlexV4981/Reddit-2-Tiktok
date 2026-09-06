@@ -1,7 +1,8 @@
 {
   "video_dir": "/srv/reddit2tiktok/videos",
   "verbose": false,
-  "voice": "en-GB-RyanNeural",
+  "voice": "bm_daniel",
+  "tts_engine": "kokoro",
   "rate": "+0%",
   "data_dir": "data",
   "output_dir": "ready4upload",
