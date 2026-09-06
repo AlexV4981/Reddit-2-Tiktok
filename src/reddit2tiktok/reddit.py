@@ -40,8 +40,18 @@ class RedditClient:
         self.base_url = base_url or f"https://{config.reddit_frontend}.reddit.com"
 
     def _wait(self, driver, function):
+        def checked(browser):
+            path = urlsplit(browser.current_url).path.rstrip("/").lower()
+            if path in {"/login", "/account/login"}:
+                raise AppError(
+                    "Reddit requires login for this request. No partial scrape was saved. "
+                    "This scraper uses a fresh anonymous browser; it cannot reuse a personal "
+                    "Reddit session. Authenticated access must be configured separately."
+                )
+            return function(browser)
+
         return WebDriverWait(driver, self.config.browser_timeout, poll_frequency=0.25).until(
-            function
+            checked
         )
 
     def _listing(self, driver, name):
