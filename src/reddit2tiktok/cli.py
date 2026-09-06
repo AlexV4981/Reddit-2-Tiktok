@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sqlite3
+import sys
+from dataclasses import asdict, replace
+from pathlib import Path
+
+from . import __version__
+from .config import Config, load_config, resolve_path, save_config
+from .errors import AppError
+from .media import Media
+from .pipeline import Pipeline
+from .reddit import RedditClient, subreddit_name
+from .store import Store
+from .text import terminal_text
+from .tts import available_voices
+
+
+def wizard(path: Path, existing: Config | None = None) -> Config:
+    print("\nReddit → TikTok configuration")
+    print("Verbose lists titles and links. Normal mode lists titles only.")
+    default = existing.verbose if existing else False
+    while True:
+        answer = input(f"Verbose? [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+        if answer in {"", "y", "yes", "n", "no"}:
+            verbose = default if not answer else answer in {"y", "yes"}
+            break
+        print("Enter y or n.")
+    while True:
+        previous = existing.video_dir if existing else ""
+        answer = input(f"Background videos folder{f' [{previous}]' if previous else ''}: ").strip()
+        value = answer or previous
+        if value and resolve_path(value, path).is_dir():
+            video_dir = str(resolve_path(value, path))
+            break
+        print("Enter an existing folder containing your background videos.")
+    voice = existing.voice if existing else "en-GB-RyanNeural"
+    print("Ryan is the selected UK male voice. Speech generation requires internet access.")
+    voice = input(f"Microsoft voice ID [{voice}]: ").strip() or voice
+    config = (
+        replace(existing, verbose=verbose, video_dir=video_dir, voice=voice)
+        if existing
+        else (Config(video_dir=video_dir, verbose=verbose, voice=voice))
+    )
+    save_config(path, config)
+    print(f"Saved configuration: {path}")
+    return config
+
+
+def print_posts(rows: list[dict], verbose: bool, *, details: bool = False) -> None:
+    if not rows:
+        print("No scraped posts yet.")
+        return
+    for row in rows:
+        print(terminal_text(row["title"]))
+        if verbose:
+            print(row["url"])
+        if details:
+            print(f"  {row['id']} | {row['status']}")
+            if row["output_path"]:
+                print(f"  {row['output_path']}")
+            if row["error"]:
+                print(f"  {terminal_text(row['error'])}")
+
+
+def scrape(config: Config, path: Path, store: Store, name: str, scrape_only: bool = False) -> int:
+    name = subreddit_name(name)
+    print(f"Fetching the top 10 posts this week from r/{name}...")
+    posts = RedditClient(config.reddit_user_agent).top_week(name)
+    added = store.save(posts)
+    print(f"Fetched {len(posts)} posts; saved {added} new posts.")
+    if not posts:
+        return 0
+    if scrape_only:
+        print_posts([store.get(post.id) for post in posts], config.verbose)
+        return 0
+    result = Pipeline(config, path, store).render([post.id for post in posts])
+    print(f"Finished: {result.ready} ready, {result.skipped} skipped, {result.failed} failed.")
+    return 1 if result.failed else 0
+
+
+def pending_ids(store: Store, force: bool = False) -> list[str]:
+    return [
+        row["id"]
+        for row in store.all()
+        if force
+        or row["status"]
+        in {
+            "scraped",
+            "failed",
+            "rendering",
+        }
+        or (
+            row["status"] == "ready"
+            and (not row["output_path"] or not Path(row["output_path"]).is_file())
+        )
+    ]
+
+
+def render(
+    config: Config, path: Path, store: Store, post_id: str | None, force: bool = False
+) -> int:
+    ids = [post_id] if post_id else pending_ids(store, force)
+    if not ids:
+        print("No unfinished posts to render.")
+        return 0
+    result = Pipeline(config, path, store).render(ids, force=force)
+    print(f"Finished: {result.ready} ready, {result.skipped} skipped, {result.failed} failed.")
+    return 1 if result.failed else 0
+
+
+def menu(config: Config, path: Path) -> int:
+    while True:
+        print(
+            "\nReddit → TikTok\n1) Scrape + create videos\n2) Config\n"
+            "3) Show all scraped posts\n4) Retry unfinished videos\n0) Exit"
+        )
+        choice = input("Choose: ").strip()
+        try:
+            store = Store(resolve_path(config.data_dir, path) / "posts.sqlite3")
+            if choice == "0":
+                return 0
+            if choice == "1":
+                scrape(config, path, store, input("Subreddit: "))
+            elif choice == "2":
+                config = wizard(path, config)
+            elif choice == "3":
+                print_posts(store.all(), config.verbose)
+            elif choice == "4":
+                render(config, path, store, None)
+            else:
+                print("Choose 0, 1, 2, 3, or 4.")
+        except (AppError, OSError, sqlite3.Error) as exc:
+            print(f"Error: {terminal_text(str(exc))}", file=sys.stderr)
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description="Create captioned Reddit story videos on Linux.")
+    root.add_argument("--version", action="version", version=__version__)
+    root.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config.json"),
+        metavar="FILE",
+        help="configuration file (default: ./config.json)",
+    )
+    verbosity = root.add_mutually_exclusive_group()
+    verbosity.add_argument("--verbose", action="store_true", default=None, help="show post links")
+    verbosity.add_argument("--quiet", dest="verbose", action="store_false", help="hide post links")
+    commands = root.add_subparsers(dest="command")
+    config = commands.add_parser("config", help="first-run setup or edit configuration")
+    config.add_argument("--video-dir", help="set the explicit input folder without prompts")
+    config.add_argument("--voice", help="Microsoft voice ID, default en-GB-RyanNeural")
+    config.add_argument(
+        "--rate", help="speech rate, for example +10%% (use --rate=-10%% for negative)"
+    )
+    config.add_argument("--show", action="store_true", help="print current configuration")
+    scrape_cmd = commands.add_parser("scrape", help="fetch this week's top 10 and create videos")
+    scrape_cmd.add_argument("subreddit", nargs="?")
+    scrape_cmd.add_argument(
+        "--scrape-only", action="store_true", help="save posts without rendering"
+    )
+    posts = commands.add_parser("posts", help="show all saved posts")
+    posts.add_argument("--details", action="store_true", help="also show IDs, statuses and errors")
+    posts.add_argument("--json", action="store_true", help="export full records as JSON")
+    rendering = commands.add_parser("render", help="render unfinished posts, or one specific ID")
+    rendering.add_argument("post_id", nargs="?")
+    rendering.add_argument(
+        "--force", action="store_true", help="create new versions of completed videos"
+    )
+    commands.add_parser("doctor", help="check local media tools and background videos")
+    voices = commands.add_parser("voices", help="list voices from the online speech service")
+    voices.add_argument("--locale", default="en-GB")
+    return root
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    path = args.config.expanduser().resolve()
+    try:
+        if args.command == "voices":
+            voices = asyncio.run(available_voices())
+            for voice in voices:
+                if voice["Locale"].lower() == args.locale.lower():
+                    print(f"{voice['ShortName']} ({voice['Gender']})")
+            return 0
+        config = load_config(path) if path.exists() else None
+        if args.command == "config":
+            if args.show:
+                if config is None:
+                    raise AppError("No configuration yet. Run the config command first.")
+                print(json.dumps(asdict(config), indent=2))
+                return 0
+            if args.video_dir or args.voice or args.rate or args.verbose is not None:
+                if config is None and not args.video_dir:
+                    raise AppError("First configuration requires --video-dir /path/to/videos.")
+                config = config or Config(video_dir=args.video_dir)
+                changes = {
+                    key: getattr(args, key)
+                    for key in ("video_dir", "voice", "rate", "verbose")
+                    if getattr(args, key) is not None
+                }
+                if "video_dir" in changes:
+                    changes["video_dir"] = str(resolve_path(changes["video_dir"], path))
+                config = replace(config, **changes)
+                if not resolve_path(config.video_dir, path).is_dir():
+                    raise AppError("The background videos folder must already exist.")
+                save_config(path, config)
+                print(f"Saved configuration: {path}")
+            elif sys.stdin.isatty():
+                wizard(path, config)
+            else:
+                raise AppError(
+                    "Interactive setup needs a terminal. Use config --video-dir /path/to/videos."
+                )
+            return 0
+        if config is None:
+            if not sys.stdin.isatty():
+                raise AppError(
+                    "Run reddit2tiktok config --video-dir /path/to/videos before unattended use."
+                )
+            config = wizard(path)
+        if args.verbose is not None:
+            config = replace(config, verbose=args.verbose)
+        if args.command is None:
+            if not sys.stdin.isatty():
+                raise AppError("The menu needs a terminal. Use scrape, posts, render, or doctor.")
+            return menu(config, path)
+        if args.command == "doctor":
+            media = Media(config, path)
+            media.check_tools()
+            videos, warnings = media.backgrounds(resolve_path(config.video_dir, path))
+            for warning in warnings:
+                print(terminal_text(warning))
+            print(f"FFmpeg, libass, H.264 and AAC OK; {len(videos)} readable background videos.")
+            print(f"Longest background: {max(v.duration for v in videos):.1f}s")
+            print(f"Voice: {config.voice}. Network services are checked when used.")
+            return 0
+        store = Store(resolve_path(config.data_dir, path) / "posts.sqlite3")
+        if args.command == "posts":
+            rows = store.all()
+            if args.json:
+                print(json.dumps(rows, indent=2, ensure_ascii=False))
+            else:
+                print_posts(rows, config.verbose, details=args.details)
+            return 0
+        if args.command == "render":
+            return render(config, path, store, args.post_id, args.force)
+        if args.command == "scrape":
+            name = args.subreddit
+            if not name:
+                if not sys.stdin.isatty():
+                    raise AppError("Provide a subreddit for unattended scraping.")
+                name = input("Subreddit: ")
+            return scrape(config, path, store, name, args.scrape_only)
+        return 0
+    except (AppError, OSError, sqlite3.Error, ValueError) as exc:
+        print(f"Error: {terminal_text(str(exc))}", file=sys.stderr)
+        return 1
+    except (KeyboardInterrupt, EOFError):
+        print("\nStopped. Saved posts remain available for retry.", file=sys.stderr)
+        return 130

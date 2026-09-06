@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import tempfile
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
+
+from .errors import AppError
+
+
+@dataclass(frozen=True)
+class Config:
+    video_dir: str
+    verbose: bool = False
+    voice: str = "en-GB-RyanNeural"
+    rate: str = "+0%"
+    data_dir: str = "data"
+    output_dir: str = "ready4upload"
+    reddit_user_agent: str = "linux:reddit2tiktok:0.1.0 (by /u/AlexV4981)"
+    width: int = 1080
+    height: int = 1920
+    fps: int = 30
+    font: str = "DejaVu Sans"
+    font_size: int = 88
+    caption_y: float = 0.62
+    crf: int = 20
+    preset: str = "medium"
+    ffmpeg: str = "ffmpeg"
+    ffprobe: str = "ffprobe"
+
+    def validate(self) -> None:
+        for key in (
+            "video_dir",
+            "voice",
+            "rate",
+            "data_dir",
+            "output_dir",
+            "reddit_user_agent",
+            "font",
+            "ffmpeg",
+            "ffprobe",
+        ):
+            value = getattr(self, key)
+            if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
+                raise AppError(
+                    f"Config '{key}' must be a nonempty string without control characters."
+                )
+        if type(self.verbose) is not bool:
+            raise AppError("Config 'verbose' must be true or false.")
+        for key, low, high in (
+            ("width", 144, 2160),
+            ("height", 256, 3840),
+            ("fps", 1, 60),
+            ("font_size", 12, 250),
+            ("crf", 0, 51),
+        ):
+            value = getattr(self, key)
+            if type(value) is not int or not low <= value <= high:
+                raise AppError(f"Config '{key}' must be an integer between {low} and {high}.")
+        if self.width % 2 or self.height % 2 or self.width * 16 != self.height * 9:
+            raise AppError("Video dimensions must be even and 9:16 (for example 1080x1920).")
+        if type(self.caption_y) not in (int, float) or not 0.2 <= self.caption_y <= 0.8:
+            raise AppError("Config 'caption_y' must be between 0.2 and 0.8.")
+        if not re.fullmatch(r"[+-]\d{1,3}%", self.rate) or not -50 <= int(self.rate[:-1]) <= 100:
+            raise AppError("Speech rate must be between -50% and +100%, including the sign.")
+        if any(c in self.font for c in ",{}\\"):
+            raise AppError("Caption font cannot contain commas, braces, or backslashes.")
+        if self.preset not in {
+            "ultrafast",
+            "superfast",
+            "veryfast",
+            "faster",
+            "fast",
+            "medium",
+            "slow",
+            "slower",
+            "veryslow",
+        }:
+            raise AppError("Invalid FFmpeg x264 preset.")
+
+
+def resolve_path(value: str, config_file: Path) -> Path:
+    path = Path(value).expanduser()
+    return (path if path.is_absolute() else config_file.resolve().parent / path).resolve()
+
+
+def load_config(path: Path) -> Config:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise AppError(f"Cannot read configuration at {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise AppError("Configuration must be a JSON object.")
+    unknown = set(data) - {field.name for field in fields(Config)}
+    if unknown:
+        raise AppError(f"Unknown config keys: {', '.join(sorted(unknown))}")
+    try:
+        config = Config(**data)
+    except TypeError as exc:
+        raise AppError("Configuration requires 'video_dir'. Run the config command.") from exc
+    config.validate()
+    return config
+
+
+def save_config(path: Path, config: Config) -> None:
+    config.validate()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Restrictive mode on Linux, atomic replacement, and no secrets stored in this file.
+    fd, temp = tempfile.mkstemp(prefix=".config-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(asdict(config), handle, indent=2)
+            handle.write("\n")
+        os.replace(temp, path)
+    finally:
+        Path(temp).unlink(missing_ok=True)
