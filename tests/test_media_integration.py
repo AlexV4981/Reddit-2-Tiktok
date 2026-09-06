@@ -8,13 +8,108 @@ from pathlib import Path
 
 import pytest
 
+from reddit2tiktok.captions import write_ass
 from reddit2tiktok.cli import main
 from reddit2tiktok.config import save_config
-from reddit2tiktok.media import Media, run
+from reddit2tiktok.media import Background, Media, run
 from reddit2tiktok.reddit import RedditClient
 from reddit2tiktok.store import Store
 from reddit2tiktok.tts import Word
 from tests.html_pages import delayed, legacy_card
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("offset", [0.001, 0.02, 0.04, 1.234])
+@pytest.mark.parametrize("preset", ["ultrafast", "medium"])
+def test_fractional_seek_preserves_zero_origin_and_silent_packet_timing(
+    config, tmp_path, media_tools, offset, preset
+):
+    ffmpeg, ffprobe = media_tools
+    config = replace(config, ffmpeg=ffmpeg, ffprobe=ffprobe, preset=preset)
+    media = Media(config)
+    background, audio = tmp_path / "source.mp4", tmp_path / "speech.wav"
+    run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=360x640:r=24:d=6",
+            "-c:v",
+            "libx264",
+            str(background),
+        ]
+    )
+    run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4.65:sample_rate=24000",
+            str(audio),
+        ]
+    )
+    subtitles = tmp_path / "captions.ass"
+    write_ass([Word("Timing", 0.2, 1.0)], subtitles, config, 4.65)
+    voiced, silent = tmp_path / "with_voice.mp4", tmp_path / "without_voice.mp4"
+    media.render(Background(background, 6), offset, audio, subtitles, voiced, 4.65)
+    media.silent_copy(voiced, silent, 4.65)
+    video_streams = []
+    packet_sets, hashes = [], []
+    for path in (voiced, silent):
+        video_streams.append(
+            next(s for s in media.probe(path)["streams"] if s["codec_type"] == "video")
+        )
+        packet_sets.append(
+            json.loads(
+                run(
+                    [
+                        ffprobe,
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_packets",
+                        "-show_entries",
+                        "packet=pts_time,dts_time,duration_time,size",
+                        "-of",
+                        "json",
+                        str(path),
+                    ]
+                )
+            )["packets"]
+        )
+        hashes.append(
+            run(
+                [
+                    ffmpeg,
+                    "-v",
+                    "error",
+                    "-i",
+                    str(path),
+                    "-map",
+                    "0:v:0",
+                    "-c:v",
+                    "copy",
+                    "-f",
+                    "hash",
+                    "-",
+                ]
+            )
+        )
+    assert all(float(s["start_time"]) == 0 for s in video_streams)
+    assert video_streams[0]["duration"] == video_streams[1]["duration"]
+    assert packet_sets[0] == packet_sets[1]
+    assert hashes[0] == hashes[1]
 
 
 @pytest.mark.integration
