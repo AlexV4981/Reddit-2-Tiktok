@@ -5,7 +5,12 @@
   "rate": "+0%",
   "data_dir": "data",
   "output_dir": "ready4upload",
-  "reddit_user_agent": "linux:reddit2tiktok:0.1.0 (by /u/AlexV4981)",
+  "reddit_frontend": "old",
+  "browser_binary": "",
+  "chromedriver": "",
+  "browser_headless": true,
+  "browser_timeout": 30,
+  "scrape_delay": 1.0,
   "width": 1080,
   "height": 1920,
   "fps": 30,
@@ -17,4 +22,3 @@
   "ffmpeg": "ffmpeg",
   "ffprobe": "ffprobe"
 }
-

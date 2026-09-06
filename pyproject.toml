@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reddit2tiktok"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Linux CLI for turning Reddit stories into captioned vertical videos"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "edge-tts>=7.2.7,<8",
-  "requests>=2.32.5,<3",
+  "selenium>=4.32,<5",
+  "beautifulsoup4>=4.13,<5",
   "markdown-it-py>=4,<5",
 ]
 
@@ -25,7 +26,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: renders actual media with FFmpeg (no network)"]
+markers = [
+  "integration: renders actual media with FFmpeg (no network)",
+  "browser: uses real Selenium Chrome against local HTML fixtures",
+]
 
 [tool.ruff]
 target-version = "py311"
